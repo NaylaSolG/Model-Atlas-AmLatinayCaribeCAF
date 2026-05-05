@@ -1,5 +1,5 @@
 ---
-  title: "Análisis territorial - Atlas CAF Argentina"
+title: "TPF - Atlas CAF Argentina"
 author: "Nayla Sol Garcilazo"
 date: "2025-12-28"
 output: html_document
@@ -7,13 +7,12 @@ output: html_document
   
 Carga de librerías
 
-```{r setup}
+```{r, echo=TRUE, results='hide', fig.show='hide', message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(
-  echo = TRUE,
-  warning = FALSE,
-  message = FALSE
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
 )
-
 library(tidyverse)
 library(corrplot)
 library(viridis)
@@ -23,7 +22,7 @@ library(broom)
 
 # Carga de base Atlas - Gobiernos Locales y Regionales de América Latina y el Caribe (CAF - Banco de Desarrollo)  
 
-```{r}
+```{r Dataset}
 atlas <- read_csv("m4_atlas_argentina.csv")
 ```
 
@@ -42,7 +41,7 @@ Diccionario de variables[https://docs.google.com/spreadsheets/d/12mugJsz59EtsbH6
 
 Selección de variables
 
-```{r}
+```{r, echo=TRUE, results='hide'}
 vars_exc <- c(
   "codigo_unico", "region", "pais", "codigo_pais",
   "nombre_subnacional", "nombre_nivel", "nivel_gobierno",
@@ -133,6 +132,8 @@ pca_step <- pca_fit$steps[[2]]
 pca_var <- pca_step$res$sdev^2
 pca_var_pct <- pca_var / sum(pca_var) * 100
 
+df_loadings <- tidy(pca_step)
+
 df_var <- tibble(
   component = paste0("PC", seq_along(pca_var_pct)),
   value = pca_var_pct
@@ -190,7 +191,7 @@ ggplot(atlas_pca_plot, aes(PC1, PC2, color = cluster)) +
   )
 ```
 
-Perfil cluster
+Perfil cluster work in progress
 ```{r}
 atlas_pca_plot %>%
   mutate(cluster = factor(km$cluster)) %>%
