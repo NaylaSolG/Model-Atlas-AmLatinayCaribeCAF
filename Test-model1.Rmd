@@ -1,0 +1,226 @@
+---
+  title: "Análisis territorial - Atlas CAF Argentina"
+author: "Nayla Sol Garcilazo"
+date: "2025-12-28"
+output: html_document
+---
+  
+Carga de librerías
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(tidyverse)
+library(corrplot)
+library(viridis)
+library(tidymodels)
+library(broom)
+```
+
+# Carga de base Atlas - Gobiernos Locales y Regionales de América Latina y el Caribe (CAF - Banco de Desarrollo)  
+
+```{r}
+atlas <- read_csv("m4_atlas_argentina.csv")
+```
+
+Cada fila representa un municipio, y las variables seleccionadas corresponden a proporciones de población u hogares, expresadas en valores entre 0 y 1 (salvo las variables de conteo).
+
+El dataset incluye, entre otras, variables asociadas a las siguientes dimensiones:
+
+educación (por ejemplo, analfabetismo, finalización del secundario),
+mercado laboral (participación laboral, desempleo),
+servicios básicos (agua, saneamiento, electricidad),
+tecnologías de la información y la comunicación (TIC),
+características demográficas y territoriales.
+
+Diccionario de variables[https://docs.google.com/spreadsheets/d/12mugJsz59EtsbH6IFf4YU2A2Q_EPpym-/edit?usp=sharing&ouid=103078014026169952210&rtpof=true&sd=true]
+
+
+Selección de variables
+
+```{r}
+vars_exc <- c(
+  "codigo_unico", "region", "pais", "codigo_pais",
+  "nombre_subnacional", "nombre_nivel", "nivel_gobierno",
+  "codigo_nivel", "gob_regional", "gob_local",
+  "poblacion_anio", "tiene_ods", "hogares"
+)
+
+atlas_filt <- atlas %>%
+  select(-all_of(vars_exc))
+```
+
+Exploración descriptiva
+```{r}
+atlas_filt %>%
+  summarise(across(
+    everything(),
+    list(
+      media = ~mean(.x, na.rm = TRUE),
+      sd = ~sd(.x, na.rm = TRUE)
+    )
+  )) %>%
+  pivot_longer(everything()) %>%
+  head()
+```
+
+Correlación
+
+```{r}
+corr2 <- cor(atlas_filt, use = "pairwise.complete.obs")
+
+corrplot(
+  corr2,
+  col = viridis(200),
+  method = "square",
+  tl.col = "black",
+  order = "hclust"
+)
+```
+
+Filtro na (justif en text)
+```{r}
+atlas_clean <- atlas_filt %>%
+  drop_na()
+```
+
+PCA (model reduc)
+```{r}
+atlas_model <- atlas_clean %>%
+  select(
+    fin_secundaria_adultos,
+    saneamiento_mejorado,
+    participacion_hombres,
+    tics_computadora
+  )
+```
+
+Modelo
+
+```{r}
+recipe_pca <- recipe(~ ., data = atlas_model) %>%
+  step_normalize(all_numeric()) %>%
+  step_pca(all_numeric(), num_comp = 2)
+
+pca_fit <- prep(recipe_pca)
+```
+
+PCA
+```{r}
+pca_data <- bake(pca_fit, new_data = atlas_model) %>%
+  mutate(PC1 = -PC1)
+```
+
+Cargas factoriales
+```{r}
+tidy(pca_fit, number = 2, type = "coef") %>%
+  mutate(component = paste0("PC", component)) %>%
+  ggplot(aes(x = value, y = terms, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = round(value, 2)), hjust = -0.2) +
+  facet_wrap(~ component) +
+  scale_fill_viridis_d() +
+  theme_minimal()
+```
+
+Varianza explicada
+```{r}
+pca_step <- pca_fit$steps[[2]] 
+pca_var <- pca_step$res$sdev^2
+pca_var_pct <- pca_var / sum(pca_var) * 100
+
+df_var <- tibble(
+  component = paste0("PC", seq_along(pca_var_pct)),
+  value = pca_var_pct
+)
+
+df_loadings %>%
+  filter(component %in% c("PC1", "PC2")) %>%
+  ggplot(aes(x = value, y = terms, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = round(value, 2)), hjust = -0.1) +
+  facet_wrap(~ component, nrow = 1) +
+  scale_fill_viridis_d() +
+  theme_minimal() +
+  labs(
+    title = "Cargas factoriales (PC1 y PC2)",
+    x = "Valor",
+    y = "Variable"
+  )
+```
+
+Gráfico de dispersión PCA
+```{r}
+atlas_pca_plot <- atlas_model %>%
+  bind_cols(pca_data)
+
+ggplot(atlas_pca_plot, aes(PC1, PC2)) +
+  geom_point(alpha = 0.6, color = viridis(1)) +
+  theme_minimal() +
+  labs(
+    title = "Municipios - PCA",
+    x = "PC1",
+    y = "PC2"
+  )
+```
+
+Cluster base PCA
+```{r}
+set.seed(1234)
+
+km <- kmeans(pca_data, centers = 3, nstart = 25)
+
+atlas_pca_plot <- atlas_pca_plot %>%
+  mutate(cluster = factor(km$cluster))
+```
+
+Gráfico cluster
+```{r}
+ggplot(atlas_pca_plot, aes(PC1, PC2, color = cluster)) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_d() +
+  theme_minimal() +
+  labs(
+    title = "Clusters sobre PCA",
+    color = "Cluster"
+  )
+```
+
+Perfil cluster
+```{r}
+atlas_pca_plot %>%
+  mutate(cluster = factor(km$cluster)) %>%
+  bind_cols(atlas_model) %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), mean)) %>%
+  pivot_longer(-cluster) %>%
+  ggplot(aes(cluster, name, fill = value)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(
+    title = "Perfil promedio por cluster",
+    x = "Cluster",
+    y = "Variable"
+  )
+```
+
+Pob
+```{r}
+atlas_final <- atlas_model %>%
+  mutate(cluster = factor(km$cluster))
+
+atlas_filt_cr <- atlas_filt %>% drop_na()
+
+atlas_final <- atlas_filt_cr %>%
+  mutate(cluster = factor(km$cluster))
+
+atlas_final <- atlas_final %>%
+  bind_cols(atlas %>% select(poblacion) %>% slice(match(rownames(atlas_final), rownames(atlas))))
+
+```
+
